@@ -1,0 +1,4 @@
+# Compiled Object files
+bin/*
+
+*.swp

@@ -1,0 +1,3 @@
+lib pcap : : <name>pcap ;
+lib boost_system : : <name>boost_system ;
+exe tracebt : src/main.cpp src/bdecode.cpp : <include>src <library>pcap <library>boost_system <cxxstd>17 ;
