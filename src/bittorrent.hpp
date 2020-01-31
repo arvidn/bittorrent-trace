@@ -73,6 +73,7 @@ struct bittorrent_side_state
 	std::uint64_t offset_ = 0;
 	state_t state_ = state_t::protocol;
 	std::vector<unsigned char> buffer_;
+	std::vector<unsigned char> reserved_;
 
 	std::map<int, std::string> extensions_;
 
@@ -117,6 +118,16 @@ std::uint16_t read_u16(span<unsigned char const> buf)
 dir_t opposite(dir_t const d)
 {
 	return d == dir_t::in ? dir_t::out : dir_t::in;
+}
+
+std::string printable(span<unsigned char const> bytes)
+{
+	std::string ret;
+	for (auto const c : bytes) {
+		if (c >= ' ' && c < 127) ret += c;
+		else ret += '.';
+	}
+	return ret;
 }
 
 struct parse_bittorrent
@@ -174,6 +185,9 @@ struct parse_bittorrent
 				for (auto const c : s.buffer_) log_ << std::setw(2) << std::setfill('0') << int(c);
 				log_ << std::dec << '\n';
 			}
+			else {
+				s.reserved_ = std::move(s.buffer_);
+			}
 			s.buffer_.clear();
 			s.offset_ += 8;
 			s.state_ = state_t::info_hash;
@@ -194,7 +208,9 @@ struct parse_bittorrent
 				log_.open(str("bt/", ih.str(), "/", key_.src, ".", key_.src_port, "_", key_.dst, ".", key_.dst_port, "_", stream_cnt));
 				++stream_cnt;
 				log_ << d << ' ' << ts << " HANDSHAKE\n";
-				log_ << d << ' ' << ts << " RESERVED\n";
+				log_ << d << ' ' << ts << " RESERVED " << std::hex;
+				for (auto const c : s.reserved_) log_ << std::setw(2) << std::setfill('0') << int(c);
+				log_ << std::dec << '\n';
 			}
 			log_ << d << ' ' << ts << " INFO-HASH " << std::hex;
 			for (auto const c : s.buffer_) log_ << std::setw(2) << std::setfill('0') << int(c);
@@ -210,7 +226,7 @@ struct parse_bittorrent
 
 			log_ << d << ' ' << ts << " PEER-ID " << std::hex;
 			for (auto const c : s.buffer_) log_ << std::setw(2) << std::setfill('0') << int(c);
-			log_ << std::dec << '\n';
+			log_ << std::dec << " [" << printable(s.buffer_) << "]\n";
 			s.buffer_.clear();
 			s.offset_ += 20;
 			s.state_ = state_t::length;
