@@ -35,6 +35,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <string>
 #include <array>
 #include <type_traits>
+#include <cassert>
 
 namespace libtorrent {
 
