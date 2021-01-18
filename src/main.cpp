@@ -73,6 +73,24 @@ private:
 	std::ofstream log[2];
 };
 
+struct fragment_key
+{
+	std::uint16_t fragment_id;
+	address_v4 src;
+	address_v4 dst;
+
+	friend std::ostream& operator<<(std::ostream& os, fragment_key const& st)
+	{
+		return os << st.src << " -> " << st.dst << ": " << st.fragment_id;
+	}
+
+	friend bool operator<(fragment_key const& lhs, fragment_key const& rhs)
+	{
+		return std::tie(lhs.fragment_id, lhs.src, lhs.dst)
+			< std::tie(rhs.fragment_id, rhs.src, rhs.dst);
+	}
+};
+
 template <typename Handler>
 struct processor
 {
@@ -132,6 +150,42 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 	// we only support IPv4
 	if (ip_header.ip_v != 4) return;
 
+	bool const more_fragments = ntohs(ip_header.ip_off) & IP_MF;
+	int const fragment_offset = (ntohs(ip_header.ip_off) & IP_OFFMASK) * 8;
+
+	// this is used to store re-assembled fragmented packets
+	std::vector<unsigned char> scratch_buffer;
+
+	if (more_fragments || fragment_offset != 0) {
+
+		fragment_key s{ntohs(ip_header.ip_id)
+			, address_v4(ntohl(ip_header.ip_src.s_addr))
+			, address_v4(ntohl(ip_header.ip_dst.s_addr))};
+
+		if (more_fragments && (pkt.size() % 8) != 0) {
+			std::cout << "ERROR: fragmented packet size not divisible by 8: " << pkt.size() << "\n";
+		}
+
+		// we currently employ a simplistic fragment-reassembly by assuming
+		// that by the time we receive the last fragment, we have received them
+		// all
+
+		auto& reassembled = ip_fragments_[s];
+
+		if (reassembled.size() < std::size_t(fragment_offset) + pkt.size()) {
+			reassembled.resize(fragment_offset + pkt.size());
+		}
+
+		std::memcpy(reassembled.data() + fragment_offset, pkt.data(), pkt.size());
+
+		// we're not done reassembling the packet yet
+		if (more_fragments) return;
+
+		scratch_buffer = std::move(reassembled);
+		pkt = span<unsigned char const>(scratch_buffer);
+		ip_fragments_.erase(s);
+	}
+
 	if (ip_header.ip_p == IPPROTO_TCP) {
 		auto const& tcp_header = cast<tcphdr const>(pkt);
 		// read the data offset header to skip over TCP options
@@ -151,14 +205,6 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 		};
 
 //		std::cout << "TCP " << s << '\n';
-
-		if ((ip_header.ip_off & IP_OFFMASK) != 0
-			&& (ip_header.ip_off & IP_MF) != 0)
-		{
-			std::cout << "TCP " << s << '\n';
-			std::cout << "ignoring fragmented IP packet\n";
-			return;
-		}
 
 		if (tcp_header.syn && tcp_header.ack) {
 			// this is a response, so the stream is already open
@@ -268,16 +314,6 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 			pkt = pkt.subspan(2 + len);
 		}
 
-//		std::cout << "uTP " << k << '\n';
-
-		if ((ip_header.ip_off & IP_OFFMASK) != 0
-			&& (ip_header.ip_off & IP_MF) != 0)
-		{
-			std::cout << "uTP " << k << '\n';
-			std::cout << "ignoring fragmented IP packet\n";
-			return;
-		}
-
 		utp_stream_key const s{k, std::uint16_t(utp_header.connection_id) };
 
 		auto [it, d] = find_utp_stream(s);
@@ -325,6 +361,11 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 private:
 	std::map<stream_key, tcp_state<Handler>> tcp_streams_;
 	std::map<utp_stream_key, utp_state<Handler>> utp_streams_;
+
+	// we don't store the IP header in the reassembled packet. When we receive
+	// the last fragment, we just use the header from that packet as the IP
+	// header.
+	std::map<fragment_key, std::vector<unsigned char>> ip_fragments_;
 };
 
 int main(int const argc, char const* argv[]) try
