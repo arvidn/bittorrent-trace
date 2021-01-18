@@ -19,6 +19,14 @@ usage::
 Files are saved to current working directory, in a subdirectory called ``bt/<info-hash>``.
 Each TCP or uTP connection is dumped to a file in that directory.
 
+uTP stream analysis
+-------------------
+
+``analyze_utp`` is a tool to analyze uTP packet captures. It can filter based on
+connection ID and indicate incoming and outgoing packet direction based on IPs.
+It prints uTP packet headers and IP packet fragments. It was developed to enable
+analysis of MTU probes.
+
 dependencies
 ~~~~~~~~~~~~
 
