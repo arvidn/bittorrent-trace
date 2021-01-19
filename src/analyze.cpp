@@ -81,7 +81,7 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 
 	// we're only interested in IP packets
 	if (ntohs(eth_header.ether_type) != ETHERTYPE_IP) {
-		if (!quiet_)
+		if (!quiet_ && !connid_filter_)
 			std::cout << "[not ethernet]\n";
 		return;
 	}
@@ -112,17 +112,17 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 	address_v4 const src(ntohl(ip_header.ip_src.s_addr));
 	address_v4 const dst(ntohl(ip_header.ip_dst.s_addr));
 
+	char const* header = "";
 	std::string indent;
 	if (!quiet_ && home_addr_)
 	{
 		if (*home_addr_ == src) {
-			std::cout << "\x1b[32m";
-			std::cout << "=>\n";
+			header = "\x1b[32m=>\n";
+			indent = "\x1b[32m";
 		}
 		else if (*home_addr_ == dst) {
-			std::cout << "\x1b[33m";
-			indent = "          ";
-			std::cout << "<=\n";
+			header = "\x1b[33m<=\n";
+			indent = "\x1b[33m          ";
 		}
 	}
 
@@ -131,7 +131,7 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 
 	if (fragment_offset == 0) {
 		if (pkt.size() < std::ptrdiff_t(sizeof(utphdr) + sizeof(udphdr))) {
-			if (!quiet_)
+			if (!quiet_ && !connid_filter_)
 				std::cout << indent << "not uTP " << pkt.size() << " [packet too small]\n";
 			return;
 		}
@@ -157,21 +157,29 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 			return;
 		}
 
+		std::cout << header;
+
 		if (k.src_port == 443 || k.dst_port == 443) {
 			std::cout << indent << "  not uTP " << k << " [https port]\n";
 			return;
 		}
 
-		std::cout << indent << "uTP " << k << " pkt-size: " << ntohs(ip_header.ip_len) << '\n';
+		std::cout << indent << "uTP " << k << " pkt-size: " << ntohs(ip_header.ip_len);
 
-		if (ip_header.ip_off != 0) {
-			std::cout << indent << "  fragment-offset: " << (fragment_offset * 8) << " id: " << fragment_id;
+		if (ip_header.ip_off != 0 || (ntohs(ip_header.ip_off) & IP_MF)) {
+			std::cout << indent << " [ fragment-offset: " << (fragment_offset * 8) << " fragment-id: " << fragment_id << " flags:";
 			if (ntohs(ip_header.ip_off) & IP_DF)
-				std::cout << " dont-fragment";
+				std::cout << " DF";
 			if (ntohs(ip_header.ip_off) & IP_MF)
-				std::cout << " more-fragments";
-			std::cout << '\n';
+				std::cout << " MF";
+			std::cout << " ]";
+			last_printed_fragment_id_ = fragment_id;
 		}
+		else {
+			last_printed_fragment_id_ = -1;
+		}
+
+		std::cout << '\n';
 
 		// make sure this is in fact a uTP packet
 		if (utp_header.get_version() != 1) {
@@ -249,6 +257,8 @@ void process(timeval const& ts, span<unsigned char const> pkt)
 	else {
 		if (quiet_) return;
 
+		if (fragment_id != last_printed_fragment_id_) return;
+
 		std::cout << "\x1b[31m";
 		std::cout << indent << "[packet fragment] pkt-size: " << ntohs(ip_header.ip_len) << '\n';
 
@@ -273,6 +283,11 @@ std::optional<std::uint16_t> connid_filter_;
 
 // the "local" address, to determin what's incoming and outgoing
 std::optional<address_v4> home_addr_;
+
+// we use this to remember the IP header ID field we last *printed*. If there's
+// any filter in affect, we only want to print fragments whose first packet were
+// not fitlered
+int last_printed_fragment_id_ = -1;
 
 // don't print any packets (just count stats)
 bool quiet_ = false;
@@ -326,6 +341,10 @@ int main(int argc, char const* argv[]) try
 			++argv;
 			--argc;
 		}
+		else {
+			std::cerr << "unknown option: " << argv[0] << '\n';
+			return 1;
+		}
 
 		++argv;
 		--argc;
@@ -342,10 +361,12 @@ int main(int argc, char const* argv[]) try
 	if (!p.quiet_) {
 		std::cout << "\x1b[0m\n\n";
 	}
-
-	std::cout << "packet counters by connection ID:\n";
-	for (auto const& [id, n] : p.packet_count_) {
-		std::cout << std::setw(5) << id << ": " << n << '\n';
+	else
+	{
+		std::cout << "packet counters by connection ID:\n";
+		for (auto const& [id, n] : p.packet_count_) {
+			std::cout << std::setw(5) << id << ": " << n << '\n';
+		}
 	}
 
 	return 0;
