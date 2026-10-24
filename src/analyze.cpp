@@ -34,6 +34,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <iomanip>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <vector>
 
 #include <net/ethernet.h>
